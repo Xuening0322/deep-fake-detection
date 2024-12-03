@@ -135,32 +135,23 @@ class AViT(nn.Module):
 
 
 class MP_AViT(nn.Module):
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0., max_visual_len=0, max_audio_len=0):
+    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0., max_visual_len=5, max_audio_len=4):
         super().__init__()
         image_height, image_width = pair(image_size)
-        patch_height, patch_width = pair(patch_size)
 
-        #assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
-
-        #num_patches = (image_height // patch_height) * (image_width // patch_width)
-        #patch_dim = channels * patch_height * patch_width
         assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
 
-        #self.to_patch_embedding = nn.Sequential(
-        #    Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
-        #    nn.Linear(patch_dim, dim),
-        #)
-        #self.pos_embedding = nn.Parameter(torch.randn(1, dim, 1))
+        # Initialize embeddings with correct shapes
         self.pos_embedding = nn.Parameter(torch.randn(1, dim, 1, image_height, image_width))
-        self.visual_modality_embeding = nn.Parameter(torch.randn(1, dim, 1))
-        self.audio_modality_embeding = nn.Parameter(torch.randn(1, dim, 1))
+        self.visual_modality_embedding = nn.Parameter(torch.randn(1, dim, 1))
+        self.audio_modality_embedding = nn.Parameter(torch.randn(1, dim, 1))
         self.temporal_visual_embedding = nn.Parameter(torch.randn(1, dim, max_visual_len))
         self.temporal_audio_embedding = nn.Parameter(torch.randn(1, dim, max_audio_len))
+        
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
         self.dropout = nn.Dropout(emb_dropout)
 
         self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
-
         self.pool = pool
         self.to_latent = nn.Identity()
         
@@ -168,84 +159,104 @@ class MP_AViT(nn.Module):
             nn.LayerNorm(dim),
             nn.Linear(dim, num_classes)
         )
+        
+        self.max_visual_len = max_visual_len
+        self.max_audio_len = max_audio_len
 
-    # def forward(self, video, audio):
-    #     video_ = []
-    #     _, _, t_len, _, _ = video.size()
-    #     _,_,aud_t_len = audio.size()
-    #     video += self.pos_embedding
-    #     for i in range(len(video)):
-    #         dim_, t_, _, _ = video[i].size()
-    #         video_.append(F.max_pool2d(video[i], kernel_size=video.size()[3:]).reshape(dim_, t_)[None,:])
-    #     video = torch.cat(video_, dim=0)
-    #     video += self.temporal_visual_embedding[:, :, :t_len]
-    #     video += self.visual_modality_embeding
-    #     audio += self.temporal_audio_embedding[:, :, :aud_t_len]
-    #     audio += self.audio_modality_embeding
-    #     b, d, _ = video.size()
-    #     video = video.reshape(b, -1, d) 
-    #     #video = video.permute([0, 2, 1])
-    #     audio = audio.reshape(b, -1, d)
-    #     #audio = audio.permute([0, 2, 1])
-    #     x = torch.cat((audio, video), dim=1)
+class MP_AViT(nn.Module):
+    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0., max_visual_len=5, max_audio_len=4, number_sample=4):
+        super().__init__()
+        image_height, image_width = pair(image_size)
 
-    #     cls_tokens = repeat(self.cls_token, '() n d -> b n d', b = b)
-    #     x = torch.cat((cls_tokens, x), dim=1)
-    #     x = self.dropout(x)
-    #     x = self.transformer(x)
+        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
 
-    #     x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
+        # Initialize embeddings with correct shapes
+        self.pos_embedding = nn.Parameter(torch.randn(1, dim, 1, image_height, image_width))
+        self.visual_modality_embedding = nn.Parameter(torch.randn(1, dim, 1))
+        self.audio_modality_embedding = nn.Parameter(torch.randn(1, dim, 1))
+        self.temporal_visual_embedding = nn.Parameter(torch.randn(1, dim, max_visual_len))
+        self.temporal_audio_embedding = nn.Parameter(torch.randn(1, dim, max_audio_len))
+        
+        self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
+        self.dropout = nn.Dropout(emb_dropout)
 
-    #     x = self.to_latent(x)
-    #     return self.mlp_head(x)
-    
-    def forward(self, video, audio):
-        # 获取视频的时间长度
-        t_len = video.size(2)
+        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
+        self.pool = pool
+        self.to_latent = nn.Identity()
+        
+        self.mlp_head = nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, num_classes)
+        )
+        
+        self.max_visual_len = max_visual_len
+        self.max_audio_len = max_audio_len
+        self.dim = dim
+        self.number_sample = number_sample  # Add this parameter to class
 
-        # 动态调整 temporal_visual_embedding 的时间长度
-        max_visual_len = self.temporal_visual_embedding.size(2)
-        if t_len > max_visual_len:
-            video = video[:, :, :max_visual_len, :, :]
-        elif t_len < max_visual_len:
-            pad_size = max_visual_len - t_len
-            padding = (0, 0, 0, 0, 0, 0, pad_size, 0)
-            video = F.pad(video, padding, mode='constant', value=0)
+    def forward(self, video, audio, phase=0, train=True):
+        batch_size = video.size(0)
+        
+        # Handle video first
+        # Add positional embedding to video
+        video = video + self.pos_embedding
+        
+        # Handle temporal dimensions for video
+        if video.size(2) > self.max_visual_len:
+            video = video[:, :, :self.max_visual_len, :, :]
+        video = video + self.temporal_visual_embedding[:, :, :video.size(2), None, None]
+        video = video + self.visual_modality_embedding[:, :, None, None, None]
+        
+        # Process video: Average pool over spatial dimensions (H, W)
+        video = F.adaptive_avg_pool3d(video, (video.size(2), 1, 1))
+        video = video.squeeze(-1).squeeze(-1)  # [B, dim, T]
+        video = video.transpose(1, 2)  # [B, T, dim]
 
-        # 添加嵌入
-        video += self.temporal_visual_embedding
-        video += self.visual_modality_embeding
+        # Handle audio
+        # First, adjust temporal dimension of audio
+        audio = audio.transpose(1, 2) if audio.size(1) != self.dim else audio  # Ensure [B, C, T] format
+        audio = F.adaptive_avg_pool1d(audio, self.max_audio_len)  # Force to max_audio_len
+        
+        # Now add embeddings
+        audio = audio + self.temporal_audio_embedding
+        audio = audio + self.audio_modality_embedding
+        audio = audio.transpose(1, 2)  # [B, T, C]
 
-        # 音频处理（类似逻辑）
-        aud_t_len = audio.size(2)
-        max_audio_len = self.temporal_audio_embedding.size(2)
-        if aud_t_len > max_audio_len:
-            audio = audio[:, :, :max_audio_len]
-        elif aud_t_len < max_audio_len:
-            pad_size = max_audio_len - aud_t_len
-            audio = F.pad(audio, (0, pad_size), mode='constant', value=0)
+        if train:
+            if phase == 0:
+                # Batch-wise negative sampling
+                video = video[:, None].expand(-1, batch_size, -1, -1).reshape(-1, video.size(1), video.size(2))
+                audio = audio[None, :].expand(batch_size, -1, -1, -1).reshape(-1, audio.size(1), audio.size(2))
+            elif phase == 1:
+                # Within-sequence negative sampling
+                num_samples = self.number_sample  # Use class parameter instead of opts
+                video = video[:, None].expand(-1, num_samples, -1, -1).reshape(-1, video.size(1), video.size(2))
+                aud_emb_new = torch.zeros_like(audio)
+                aud_emb_new = aud_emb_new[None, :]
+                aud_emb_new = aud_emb_new.expand(num_samples, -1, -1, -1).reshape(-1, audio.size(1), audio.size(2))
+                
+                bs2 = batch_size // num_samples
+                for k in range(bs2):
+                    aud_emb_new[k*num_samples*num_samples:(k+1)*num_samples*num_samples] = (
+                        audio[k*num_samples:(k+1)*num_samples][None, :]
+                    ).expand(num_samples, -1, -1, -1).reshape(-1, audio.size(1), audio.size(2))
+                audio = aud_emb_new
 
-        audio += self.temporal_audio_embedding
-        audio += self.audio_modality_embeding
-        # 转换形状
-        b, d, _, _, _ = video.size()
-        video = video.reshape(b, -1, d)
-        audio = audio.permute(0, 2, 1)
-
-        # 拼接
+        # Concatenate along temporal dimension
         x = torch.cat((audio, video), dim=1)
 
-        cls_tokens = repeat(self.cls_token, '() n d -> b n d', b=b)
+        # Add cls token
+        cls_tokens = repeat(self.cls_token, '() n d -> b n d', b=x.size(0))
         x = torch.cat((cls_tokens, x), dim=1)
+        
+        # Apply dropout and transformer
         x = self.dropout(x)
         x = self.transformer(x)
 
+        # Pool and classify
         x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
-
         x = self.to_latent(x)
         return self.mlp_head(x)
-
-
 
 class MP_av_feature_AViT(nn.Module):
     def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0., max_visual_len=0, max_audio_len=0):
