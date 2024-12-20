@@ -1,6 +1,5 @@
-# Deep Fake Detection
+# Self-Supervised Audiovisual Deepfake Detection on the Presidential Deepfakes Dataset (PDD)
 
-Self-Supervised Audiovisual Deepfake Detection on the Presidential Deepfakes Dataset (PDD)
 
 ## Overview
 
