@@ -1,6 +1,8 @@
-from .resnet_2d3d import * 
+from .resnet_2d3d import *
 from .s3dg import S3D
 from .i3d import InceptionI3d
+from .transformer3d import vit3d_tiny, vit3d_light, vit3d_base
+from .audio_process import AudioEncoder
 
 def select_backbone(network, first_channel=3):
     param = {'feature_size': 1024}
@@ -32,6 +34,20 @@ def select_backbone(network, first_channel=3):
         model = S3D(first_channel=first_channel)
     elif network == 's3dg':
         model = S3D(first_channel=first_channel, gating=True)
+
+    # transformer-based model
+    elif network == 'vit3d_tiny':
+        param['feature_size'] = 96
+        model = vit3d_tiny(in_channels=first_channel, num_classes=param['feature_size'])
+    elif network == 'vit3d_light':
+        param['feature_size'] = 192
+        model = vit3d_light(in_channels=first_channel, num_classes=param['feature_size'])
+    elif network == 'vit3d_base':
+        param['feature_size'] = 384
+        model = vit3d_base(in_channels=first_channel, num_classes=param['feature_size'])
+    elif network == 'vit3d_small':
+        param['feature_size'] = 192
+        model = vit3d_light(in_channels=first_channel, num_classes=param['feature_size'])
 
     else: 
         raise NotImplementedError

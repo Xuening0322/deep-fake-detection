@@ -9,3 +9,6 @@ Deep Fake Detection
   year={2023}
 }
 ```
+
+pretrained models: 
+https://drive.google.com/file/d/1-RGElrYZquO6RGE9Xjf-ODkb6UXWBR3g/view?usp=sharing

@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn as nn
 import json
 import pandas as pd
-from fake_celeb_dataset import FakeAVceleb
+from fake_celeb_dataset_detect import FakeAVceleb
 from model import MP_AViT, MP_av_feature_AViT
 from subprocess import call
 from backbone.select_backbone import select_backbone
@@ -98,8 +98,6 @@ class network(nn.Module):
 
     def forward(self, video, audio, phase=0, train=True):
         if train:
-            print(f"Input video shape: {video.shape}")
-            print(f"Input audio shape: {audio.shape}")
             if phase == 0:
                 vid_emb = self.vis_enc(video)
                 batch_size,c,t, h, w= vid_emb.shape
@@ -111,11 +109,6 @@ class network(nn.Module):
                 aud_emb = aud_emb[None, :]
                 aud_emb = aud_emb.expand(batch_size, -1, -1, -1).reshape(-1, c_aud, t_aud)
                 cls_emb = self.transformer(vid_emb, aud_emb)
-                
-                print(f"Video embedding shape: {vid_emb.shape}")
-                print(f"Audio embedding shape: {aud_emb.shape}")
-                print(f"Output class embedding shape: {cls_emb.shape}")
-
             elif phase == 1:
                 vid_emb = self.vis_enc(video)
                 batch_size,c,t, h, w= vid_emb.shape
@@ -143,11 +136,124 @@ class network(nn.Module):
             vid_emb = self.vis_enc(video)
             aud_emb = self.aud_enc(audio)
             cls_emb = self.transformer(vid_emb, aud_emb)
-            print(f"Video embedding shape (inference): {vid_emb.shape}")
-            print(f"Audio embedding shape (inference): {aud_emb.shape}")
-            print(f"Output class embedding shape (inference): {cls_emb.shape}")
-
         return cls_emb
+
+
+def plot_analysis(video_set, audio_set, predict_set, avfeature_scores, output_dir, video_index=0):
+    """
+    Generate visualization plots for analysis
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.gridspec import GridSpec
+    import librosa
+    
+    # Create figure with adjusted size ratio
+    fig = plt.figure(figsize=(15, 12))
+    
+    # Adjust spacing between subplots
+    gs = GridSpec(4, 1, 
+                 height_ratios=[1.2, 1.5, 1, 1.5], 
+                 hspace=0.4)  # Increase hspace to avoid title overlap
+    
+    # Main title with adjusted position
+    fig.suptitle('Key Frames of the Video', 
+                fontsize=16, 
+                y=0.98)
+
+    
+    # 1. Video frames
+    ax1 = fig.add_subplot(gs[0])
+    n_frames = 4
+    frame_indices = np.linspace(0, video_set.shape[2]-1, n_frames, dtype=int)
+    
+    for i in range(n_frames):
+        ax = fig.add_axes([0.1 + i*0.22, 0.78, 0.2, 0.15])
+        frame = video_set[video_index, :, frame_indices[i]].permute(1, 2, 0).cpu().numpy()
+        frame = (frame - frame.min()) / (frame.max() - frame.min() + 1e-8)
+        ax.imshow(frame)
+        ax.axis('off')
+    ax1.remove()
+    
+    # 2. Audio spectrogram
+    ax2 = fig.add_subplot(gs[1])
+    ax2.set_title('Audio Spectrogram', pad=10)
+    audio_data = audio_set[video_index].cpu().numpy()
+    spec = librosa.feature.melspectrogram(y=audio_data, sr=opts.sample_rate)
+    spec_db = librosa.power_to_db(spec, ref=np.max)
+    ax2.imshow(spec_db, aspect='auto', origin='lower', cmap='coolwarm')
+    ax2.set_ylabel('Frequency (mel scale)')
+    ax2.set_xticks([])
+    
+    # 3. Time delay analysis
+    ax3 = fig.add_subplot(gs[2])
+    ax3.set_title('Audio-Visual Time Delay Analysis', pad=10)
+    time_points = range(len(predict_set))
+    delays = torch.argmax(predict_set, dim=1).cpu().numpy() - 15
+    ax3.plot(time_points, delays, 'b-', marker='.', markersize=8)
+    ax3.axhline(y=0, color='r', linestyle='--', alpha=0.3)
+    ax3.set_ylim(-15, 15)
+    ax3.set_ylabel('Time Delay (frames)')
+    ax3.text(0.02, 0.95, 'Zero line indicates perfect sync', 
+             transform=ax3.transAxes, fontsize=8, alpha=0.7)
+    ax3.grid(True, alpha=0.3)
+    ax3.set_xlabel('Frame Number')
+    
+    # 4. Deepfake Detection Score
+    ax4 = fig.add_subplot(gs[3])
+    ax4.set_title('Deepfake Detection Score')
+    probs = F.softmax(predict_set, dim=1)
+    scores = probs.max(dim=1)[0].cpu().numpy()
+    ax4.plot(time_points, scores, 'orange', label='Fake Score', linewidth=2)
+    
+    # Mark potential manipulated regions
+    threshold = scores.mean() + scores.std()
+    for i in range(len(scores)):
+        if scores[i] > threshold:
+            ax4.axvspan(i, i+1, color='red', alpha=0.2)
+            
+    ax4.set_xlabel('Time (frame)')
+    ax4.set_ylabel('Manipulation Probability')
+    ax4.text(0.02, 0.95, 'Red regions indicate detected manipulations', 
+             transform=ax4.transAxes, fontsize=8, alpha=0.7)
+    ax4.set_ylim(0, 1)
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
+    
+    plt.tight_layout(rect=[0, 0.02, 1, 0.95])
+    
+    save_path = os.path.join(output_dir, f'analysis_video_{video_index}.png')
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+    fig_frames = plt.figure(figsize=(6, 4))
+    n_frames = 3  # 减少到3帧使显示更紧凑
+    frame_indices = np.linspace(0, video_set.shape[2]-1, n_frames, dtype=int)
+    
+    for i in range(n_frames):
+        ax = fig_frames.add_axes([0.1 + i*0.2 + i*0.05, 0.7 - i*0.2, 0.3, 0.4])  # 调整位置使其成斜线排列
+        frame = video_set[video_index, :, frame_indices[i]].permute(1, 2, 0).cpu().numpy()
+        frame = (frame - frame.min()) / (frame.max() - frame.min() + 1e-8)
+        ax.imshow(frame)
+        ax.axis('off')
+    
+    frames_path = os.path.join(output_dir, f'diagonal_frames_{video_index}.png')
+    plt.savefig(frames_path, dpi=300, bbox_inches='tight', transparent=True)
+    plt.close(fig_frames)
+
+    # 保存音频频谱图
+    fig_spec = plt.figure(figsize=(6, 3))
+    ax_spec = fig_spec.add_subplot(111)
+    audio_data = audio_set[video_index].cpu().numpy()
+    spec = librosa.feature.melspectrogram(y=audio_data, sr=opts.sample_rate)
+    spec_db = librosa.power_to_db(spec, ref=np.max)
+    ax_spec.imshow(spec_db, aspect='auto', origin='lower', cmap='coolwarm')
+    ax_spec.axis('off')
+    
+    spec_path = os.path.join(output_dir, f'spectrogram_{video_index}.png')
+    plt.savefig(spec_path, dpi=300, bbox_inches='tight', transparent=True)
+    plt.close(fig_spec)
+
 
 def test2(dist_model, avfeature_model, loader, dist_reg_model, avfeature_reg_model, max_len=50):
     output_dir = opts.output_dir
@@ -263,6 +369,16 @@ def test2(dist_model, avfeature_model, loader, dist_reg_model, avfeature_reg_mod
                     prob = (opts.lam)*prob_avfeature + prob
                 #tqdm.write("The score of this video is {} ".format(prob.item()))
                 logger.info("The score of this video is {} ".format(prob.item()))
+                
+                plot_analysis(
+                    video_set=video_set,
+                    audio_set=audio_set,
+                    predict_set=predict_set,
+                    avfeature_scores=predict_set_avfeature,
+                    output_dir=output_dir,
+                    video_index=0
+                )
+                
                 score_list.append(prob.item())
                 pbar.update(1)
             np.save(score_file_path, np.array(score_list))
@@ -280,27 +396,12 @@ def main():
     sync_model = network(vis_enc=vis_enc, aud_enc=aud_enc, transformer=Transformer)
     avfeature_sync_model = network(vis_enc=vis_enc, aud_enc=aud_enc, transformer=avfeature_Transformer)
     #model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+    # sync_model_weight = torch.load('sync_model.pth', map_location=torch.device('cpu'))
     sync_model_weight = torch.load('sync_model.pth', map_location=torch.device('cpu'))
+
+
     sync_model.load_state_dict(sync_model_weight)
     avfeature_sync_model.load_state_dict(sync_model_weight)
-
-    # 打印模型的关键部分
-    print("\n=== Debugging Model Structure ===")
-    print("Visual Encoder:")
-    print(sync_model.vis_enc)
-
-    print("\nAudio Encoder:")
-    print(sync_model.aud_enc)
-
-    print("\nTransformer:")
-    print(sync_model.transformer)
-
-    # 打印Transformer权重的形状
-    print("\nTransformer Parameters:")
-    for name, param in sync_model.transformer.named_parameters():
-        print(f"{name}: {param.size()}")
-
-    # 将模型加载到设备
     sync_model.to(device)
     avfeature_sync_model.to(device)
     #model = DDP(model, device_ids=[local_rank], output_device=local_rank)

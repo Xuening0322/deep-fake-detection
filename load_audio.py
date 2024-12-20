@@ -65,11 +65,11 @@ def wav2filterbanks(wav, mel_basis=None, resnet=False, device="cpu"):
     if mel_basis is None:
         # Build a Mel filter
         mel_basis = torch.from_numpy(
-            librosa.filters.mel(audio_opts['sample_rate'],
-                                audio_opts['n_fft'],
-                                n_mels=audio_opts['n_mel'],
-                                fmin=0,
-                                fmax=int(audio_opts['sample_rate'] / 2)))
+            librosa.filters.mel(sr=audio_opts['sample_rate'],
+                    n_fft=audio_opts['n_fft'],
+                    n_mels=audio_opts['n_mel'],
+                    fmin=0,
+                    fmax=int(audio_opts['sample_rate'] / 2)))
         mel_basis = mel_basis.float().to(power_spect.device)
     features = torch.log(torch.matmul(mel_basis, power_spect) + 1e-20)  # b x F x T
     features = features.permute([0, 2, 1]).contiguous()  # b x T x F

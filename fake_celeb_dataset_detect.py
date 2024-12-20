@@ -12,6 +12,17 @@ import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np
 
+def load_video_paths(path_file):
+    """Load video paths from text file"""
+    if isinstance(path_file, str):
+        with open(path_file, 'r') as f:
+            video_paths = [line.strip() for line in f.readlines()]
+    elif isinstance(path_file, list):
+        video_paths = path_file
+    else:
+        raise ValueError("video_path must be either a file path or a list of paths")
+    return video_paths
+
 class FakeAVceleb(data.Dataset):
 
     def __init__(self, video_path, resize, fps, sample_rate, vid_len, phase, train=True, number_sample=1, lrs2=False, need_shift=False, lrs3=False, kodf=False, real=True, lavdf=False, vox_korea=False, random_shift=False, fixed_shift=False, shift=0,robustness=False, test=False):
@@ -34,28 +45,25 @@ class FakeAVceleb(data.Dataset):
         self.test = test
         if self.lrs2:
             self.data_path = 'data'
-        elif self.lrs3:
-            self.data_path = './data/lrs3'
-        elif self.kodf:
-            if self.real:
-                self.data_path = './data/syncnet_python/real_set/pycrop'
-            else:
-                self.data_path =  './data/syncnet_python/fake_set/pycrop'
-        elif self.lavdf:
-            self.data_path = './data/lavdf'
-        elif self.vox_korea:
-            self.data_path = './data/vox_korea'
-        elif self.robustness:
-            self.data_path = './data/DeeperForensics-1.0'
+        
         elif self.test:
             self.data_path = ''
         else:
-            self.data_path = './data/av_sync'
+            self.data_path = ''
         self.phase = phase
         self.all_vids = video_path
         self.number_sample = number_sample
         self.need_shift = need_shift
         
+         # Load video paths
+        if isinstance(video_path, str):
+            with open(video_path, 'r') as f:
+                self.all_vids = [line.strip() for line in f.readlines()]
+        else:
+            self.all_vids = video_path
+
+        print(f"Loaded {len(self.all_vids)} video paths")
+    
 
     def __len__(self):
         'Denotes the total number of samples'
@@ -100,13 +108,11 @@ class FakeAVceleb(data.Dataset):
 
         # -- load video
         if self.kodf:
-            # vid_path_orig = os.path.join(self.data_path, vid_name + '.avi')
-            # vid_path_25fps = os.path.join(self.data_path, vid_name + '.mp4')
-            vid_path_orig = os.path.join(self.data_path, vid_name)
-            vid_path_25fps = os.path.join(self.data_path, vid_name)
+            vid_path_orig = os.path.join(self.data_path, vid_name + '.avi')
+            vid_path_25fps = os.path.join(self.data_path, vid_name + '.mp4')
         else:
-            vid_path_orig = os.path.join(self.data_path, vid_name)
-            vid_path_25fps = os.path.join(self.data_path, vid_name)
+            vid_path_orig = os.path.join(self.data_path, vid_name + '.mp4')
+            vid_path_25fps = os.path.join(self.data_path, vid_name + '.mp4')
         # -- reencode video to 25 fps
         
         command = (
